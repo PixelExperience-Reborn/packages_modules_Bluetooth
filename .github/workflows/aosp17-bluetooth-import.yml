@@ -1,0 +1,70 @@
+name: Import verified AOSP17 Bluetooth module source
+
+on:
+  push:
+    branches:
+      - port/a17-bluetooth-import-20261103
+    paths:
+      - .github/workflows/aosp17-bluetooth-import.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aosp17-bluetooth-import
+  cancel-in-progress: false
+
+jobs:
+  publish-exact-aosp17-tree:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      SOURCE_SHA: c77db469de80f86660bc053bec4dee0c5d4b947c
+      SOURCE_TREE: 385b36982cbe1daeb61471ab16ebad099aeb78b1
+      TARGET_BRANCH: port/a17-bluetooth-aosp17-base-20261103
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fetch pinned official Android17 Bluetooth sources and validate SHA/tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/aosp-bluetooth"
+          cd "$RUNNER_TEMP/aosp-bluetooth"
+          git init -q
+          git remote add aosp https://android.googlesource.com/platform/packages/modules/Bluetooth
+          git -c protocol.version=2 fetch --no-tags --depth=1 --filter=blob:none \
+            aosp refs/tags/android-17.0.0_r1
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"
+          test "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$SOURCE_TREE"
+          git cat-file -e "$SOURCE_TREE^{tree}"
+          echo "PASS: official Bluetooth AOSP17 $SOURCE_SHA tree $SOURCE_TREE"
+      - name: Publish separate root snapshot with exact upstream tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aosp-bluetooth"
+          git remote add publish "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          ref="refs/heads/$TARGET_BRANCH"
+          current="$(git ls-remote --heads publish "$ref" | cut -f1)"
+          if [ -n "$current" ]; then
+            git -c protocol.version=2 fetch --no-tags --depth=1 --filter=blob:none publish "$ref"
+            published_tree="$(git rev-parse 'FETCH_HEAD^{tree}')"
+            test "$published_tree" = "$SOURCE_TREE" || {
+              echo "Existing target ref tree does not match official AOSP17"
+              exit 1
+            }
+            echo "Already published: $current, matching official AOSP17 tree"
+            exit 0
+          fi
+
+          export GIT_AUTHOR_NAME="PixelExperience-Reborn CI"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          snapshot="$(printf 'Bluetooth: verified Android 17 r1 source snapshot\n\nOfficial source commit: %s\nVerified official tree: %s\nHistory intentionally not mirrored; old PE seventeen remains intact.\n' \
+            "$SOURCE_SHA" "$SOURCE_TREE" | git commit-tree "$SOURCE_TREE")"
+          test "$(git rev-parse "$snapshot^{tree}")" = "$SOURCE_TREE"
+          git -c protocol.version=2 push --no-thin publish "$snapshot:$ref"
+          test "$(git ls-remote --heads publish "$ref" | cut -f1)" = "$snapshot"
+          echo "PASS: Bluetooth exact-tree AOSP17 snapshot $snapshot"
