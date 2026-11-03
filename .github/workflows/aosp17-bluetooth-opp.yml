@@ -1,0 +1,49 @@
+name: AOSP17 Bluetooth OPP URI regression
+
+on:
+  pull_request:
+    branches:
+      - port/a17-bluetooth-aosp17-base-20261103
+    paths:
+      - android/app/src/com/android/bluetooth/opp/BluetoothOppUtility.java
+      - tests/host/test_bluetooth_opp_uri.py
+      - .github/workflows/aosp17-bluetooth-opp.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aosp17-bluetooth-opp-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test-source-method:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Prepare Java 17 host compiler
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download actual Android17 PE source files at the PR commit
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            android/app/src/com/android/bluetooth/opp/BluetoothOppUtility.java \
+            tests/host/test_bluetooth_opp_uri.py
+          do
+            mkdir -p "$(dirname "$path")"
+            curl --fail --silent --show-error --location --retry 4 \
+              "https://raw.githubusercontent.com/PixelExperience-Reborn/packages_modules_Bluetooth/$REVISION/$path" \
+              -o "$path"
+            test -s "$path"
+            echo "Pinned source fetched: $path"
+          done
+      - name: Compile real Java OPP predicate and run null-authority regression
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests/host -p 'test_*.py' -v
